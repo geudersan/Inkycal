@@ -1224,6 +1224,7 @@ class InkycalWebUiHandler(BaseHTTPRequestHandler):
         if action in extras.ACTIONS:
             outcome = extras.handle(action, form, sudo_password=sudo_password)
         elif action == "save_settings":
+            extras.backup_settings()
             outcome = _save_settings_text(settings_content, sudo_password=sudo_password)
         elif action == "save_settings_kv":
             outcome = _save_settings_kv(kv_paths, kv_values, sudo_password=sudo_password)

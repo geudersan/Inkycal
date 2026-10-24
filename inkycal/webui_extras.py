@@ -567,11 +567,30 @@ def _renumber(modules: List[dict]) -> None:
             m["position"] = i + 1
 
 
+def _form_module_indexes(form: Dict[str, List[str]]) -> set:
+    found = set()
+    for name in form:
+        if name.startswith("t:modules."):
+            part = name[len("t:modules."):].split(".", 1)[0]
+            if part.isdigit():
+                found.add(int(part))
+    return found
+
+
 def handle_settings_form(form: Dict[str, List[str]], sudo_password: str = ""):
     W = _webui()
     data = W._read_settings_json()
-    if not isinstance(data, dict):
-        return _Outcome("Settings save failed: settings.json is not valid.")
+    if not isinstance(data, dict) or not data:
+        return _Outcome("Settings save failed: settings.json could not be read. Nothing was changed - "
+                        "reload the page and try again.")
+
+    # Safety: the page must match the file. If modules the page knows about are missing
+    # in the file (file changed in the meantime, or could not be read), save nothing.
+    current = data.get("modules") if isinstance(data.get("modules"), list) else []
+    expected = _form_module_indexes(form)
+    if expected and max(expected) >= len(current):
+        return _Outcome("Settings save failed: settings.json changed since this page was loaded. "
+                        "Nothing was changed - reload the page and try again.")
 
     try:
         apply_form(data, form)
@@ -609,6 +628,7 @@ def handle_settings_form(form: Dict[str, List[str]], sudo_password: str = ""):
         return _Outcome("Settings save failed: invalid module operation.")
 
     _renumber(modules)
+    backup_settings()
     outcome = W._write_settings_json(data, "Settings save failed", sudo_password=sudo_password)
     if outcome:
         return outcome
@@ -632,7 +652,32 @@ def _safe_name(name: str) -> str:
 def list_layouts() -> List[str]:
     if not LAYOUT_DIR.exists():
         return []
-    return sorted(p.stem for p in LAYOUT_DIR.glob("*.json"))
+    named = sorted(p.stem for p in LAYOUT_DIR.glob("*.json") if not p.stem.startswith("Backup "))
+    backups = sorted((p.stem for p in LAYOUT_DIR.glob("Backup *.json")), reverse=True)
+    return named + backups
+
+
+BACKUPS_TO_KEEP = 10
+
+
+def backup_settings() -> None:
+    """Copy the current settings.json to layouts/'Backup <date time>.json' before it is changed."""
+    try:
+        import time as _t
+        W = _webui()
+        text = W._read_settings_text()
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict) or not parsed.get("modules"):
+            return  # never back up an empty/broken file over good backups
+        LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
+        newest = sorted(LAYOUT_DIR.glob("Backup *.json"))
+        if newest and newest[-1].read_text(encoding="utf-8") == text:
+            return  # unchanged since the last backup
+        (LAYOUT_DIR / f"Backup {_t.strftime('%Y-%m-%d %H-%M-%S')}.json").write_text(text, encoding="utf-8")
+        for old in sorted(LAYOUT_DIR.glob("Backup *.json"))[:-BACKUPS_TO_KEEP]:
+            old.unlink()
+    except Exception:
+        pass  # a failed backup must never block saving
 
 
 def handle_layout(action: str, form: Dict[str, List[str]], sudo_password: str = ""):
@@ -643,8 +688,14 @@ def handle_layout(action: str, form: Dict[str, List[str]], sudo_password: str = 
     path = LAYOUT_DIR / f"{name}.json"
 
     if action == "layout_save":
+        text = W._read_settings_text()
+        try:
+            if not json.loads(text).get("modules"):
+                return _Outcome("Layout not saved: the current settings have no modules.")
+        except Exception:
+            return _Outcome("Layout not saved: settings.json could not be read.")
         LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
-        path.write_text(W._read_settings_text(), encoding="utf-8")
+        path.write_text(text, encoding="utf-8")
         return _Outcome(f"Layout '{name}' saved.")
 
     if action == "layout_delete":
@@ -660,6 +711,7 @@ def handle_layout(action: str, form: Dict[str, List[str]], sudo_password: str = 
             data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as error:
             return _Outcome(f"Layout load failed: invalid JSON ({error})")
+        backup_settings()
         outcome = W._write_settings_json(data, "Layout load failed", sudo_password=sudo_password)
         if outcome:
             return outcome
