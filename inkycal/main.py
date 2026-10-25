@@ -24,6 +24,7 @@ from inkycal.modules import InkycalModuleImporter
 from inkycal.modules.template import module_padding
 from inkycal.settings import Settings
 from inkycal.utils.canvas import Canvas
+from inkycal.utils import canvas as canvas_module
 from inkycal.utils.enums import FONTS
 
 from inkycal.utils.functions import get_system_tz, draw_border_2, get_inkycal_version
@@ -123,6 +124,9 @@ class Inkycal:
 
         self.show_border = self.settings.get('border_around_modules', False)
 
+        # "crisp" = text without anti-aliasing (sharper on e-paper), "smooth" = Inkycal's default
+        canvas_module.CRISP_TEXT = self.settings.get('text_rendering', 'smooth') == 'crisp'
+
         self.cleanup()
 
         # Load drivers if image should be rendered
@@ -164,7 +168,9 @@ class Inkycal:
                 # 2. Load class safely
                 ModuleClass = load_module_class(dotted_path)
 
-                # 3. Instantiate module
+                # 3. Instantiate module (modules without their own font use the general one)
+                if not module['config'].get('font') and self.settings.get('font'):
+                    module['config']['font'] = self.settings['font']
                 instance = ModuleClass(module)
 
                 # 4. Attach instance to self.module_X

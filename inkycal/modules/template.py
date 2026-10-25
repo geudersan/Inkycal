@@ -6,6 +6,25 @@ from PIL import ImageFont
 from inkycal.utils.enums import FONTS
 
 
+# Fonts that can be chosen in settings.json ("font": "<name>") - text fonts only
+TEXT_FONTS = [
+    "noto_sans_semicondensed_medium",
+    "noto_sans_semicondensed",
+    "noto_sans_semicondensed_semibold",
+    "noto_sans_ui_regular",
+    "noto_sans_ui_bold",
+    "atkinson_hyperlegible",
+    "atkinson_hyperlegible_bold",
+]
+
+
+def font_from_name(name):
+    """FONTS member for a font name from settings.json, falling back to the default font."""
+    if name and name in TEXT_FONTS:
+        return FONTS[name]
+    return FONTS.default
+
+
 def module_padding(conf):
     """Return (left, right, top, bottom) padding of a module config."""
     px = conf.get("padding_x", 0) or 0
@@ -44,7 +63,7 @@ class InkycalModule(metaclass=abc.ABCMeta):
         self.padding_top = self.padding_bottom = (top + bottom) / 2
 
         self.fontsize = conf["fontsize"]
-        self.font = FONTS.default
+        self.font = font_from_name(conf.get("font"))
 
     def set(self, help=False, **kwargs):
         """Set attributes of class, e.g. class.set(key=value)

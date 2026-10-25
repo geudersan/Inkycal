@@ -158,8 +158,42 @@ LABELS = {
     "big_next": "big 'next train' line on top",
 }
 
+FONT_CHOICES = [
+    "noto_sans_semicondensed_medium",
+    "noto_sans_semicondensed",
+    "noto_sans_semicondensed_semibold",
+    "noto_sans_ui_regular",
+    "noto_sans_ui_bold",
+    "atkinson_hyperlegible",
+    "atkinson_hyperlegible_bold",
+]
+
 GENERAL_OPTIONS: Dict[str, List[object]] = {
     "orientation": [0, 180],
+    "font": FONT_CHOICES,
+    "text_rendering": ["smooth", "crisp"],
+}
+MODULE_OPTIONS: Dict[str, List[object]] = {
+    "font": [""] + FONT_CHOICES,
+}
+
+# Friendly names shown in dropdowns (the value saved stays the same)
+OPTION_LABELS = {
+    "": "same as general setting",
+    "noto_sans_semicondensed_medium": "Noto Sans Medium (Inkycal default)",
+    "noto_sans_semicondensed": "Noto Sans Regular (thinner)",
+    "noto_sans_semicondensed_semibold": "Noto Sans SemiBold",
+    "noto_sans_ui_regular": "Noto Sans UI (wider)",
+    "noto_sans_ui_bold": "Noto Sans UI Bold",
+    "atkinson_hyperlegible": "Atkinson Hyperlegible (very readable)",
+    "atkinson_hyperlegible_bold": "Atkinson Hyperlegible Bold",
+    "smooth": "smooth (Inkycal default)",
+    "crisp": "crisp (sharpest on e-paper)",
+}
+
+GENERAL_HINTS = {
+    "font": "Font for all modules. A module can pick its own font in its section.",
+    "text_rendering": "Crisp draws text without grey edges, which looks sharper on e-paper.",
 }
 
 # Keys that hold a list of plain values (edited as one value per line)
@@ -169,10 +203,11 @@ COMMA_SPLIT_KEYS = {"lines", "calibration_hours"}
 SECRET_KEYS = {"api_key", "api_key_owm", "token", "todoist_api_key"}
 
 GENERAL_ORDER = [
-    "model", "update_interval", "orientation", "language", "image_hash",
+    "model", "update_interval", "orientation", "language", "font", "text_rendering", "image_hash",
     "border_around_modules", "info_section", "info_section_height", "calibration_hours",
 ]
-MODULE_ORDER = ["size", "padding_top", "padding_bottom", "padding_left", "padding_right", "fontsize", "language"]
+MODULE_ORDER = ["size", "padding_top", "padding_bottom", "padding_left", "padding_right", "font", "fontsize",
+                "language"]
 DEFAULT_MODULE_WIDTH = 440
 _LEGACY_PADDING = ("padding_x", "padding_y", "offset_x", "offset_y")
 
@@ -190,6 +225,7 @@ def sides_view(cfg: Dict[str, object]) -> Dict[str, object]:
     view.setdefault("padding_right", max(0, px - ox))
     view.setdefault("padding_top", max(0, py + oy))
     view.setdefault("padding_bottom", max(0, py - oy))
+    view.setdefault("font", "")
     return view
 
 
@@ -268,7 +304,8 @@ def _field_row(path: Tuple[object, ...], rel: Tuple[str, ...], value: object,
             opts = [value] + opts
         kind = "int" if all(isinstance(o, int) and not isinstance(o, bool) for o in opts) else "str"
         option_html = "".join(
-            f"<option value='{html.escape(str(o))}' {'selected' if o == value else ''}>{html.escape(str(o))}</option>"
+            f"<option value='{html.escape(str(o))}' {'selected' if o == value else ''}>"
+            f"{html.escape(OPTION_LABELS.get(str(o), str(o)))}</option>"
             for o in opts
         )
         return (
@@ -313,8 +350,8 @@ def _fields_for(container: Dict[str, object], base: Tuple[object, ...], order: L
     for key in sorted(container.keys(), key=sort_key):
         value = container[key]
         spec = specs.get(key, {})
-        hint = str(spec.get("label", ""))
-        options = spec.get("options") or (GENERAL_OPTIONS.get(key) if general else None)
+        hint = str(spec.get("label", "")) or (GENERAL_HINTS.get(key, "") if general else "")
+        options = spec.get("options") or (GENERAL_OPTIONS.get(key) if general else MODULE_OPTIONS.get(key))
         if general and key == "model":
             options = sorted(supported_models.keys())
 
@@ -337,6 +374,8 @@ def render_settings_card(settings_data: Dict[str, object]) -> str:
     sw, sh = screen_size(settings_data)
     modules = settings_data.get("modules", []) if isinstance(settings_data.get("modules"), list) else []
     general = {k: v for k, v in settings_data.items() if k != "modules"}
+    general.setdefault("font", "noto_sans_semicondensed_medium")
+    general.setdefault("text_rendering", "smooth")
 
     parts: List[str] = [
         "<section class='card' style='margin-top: 1rem;' data-card='settings'>",
