@@ -21,7 +21,9 @@ import importlib
 from inkycal.display import Display
 from inkycal.display.supported_models import is_parallel_display
 from inkycal.modules import InkycalModuleImporter
-from inkycal.modules.template import module_padding
+from inkycal.modules.template import module_padding, font_from_name
+from inkycal import night_mode
+from datetime import datetime
 from inkycal.settings import Settings
 from inkycal.utils.canvas import Canvas
 from inkycal.utils import canvas as canvas_module
@@ -123,6 +125,7 @@ class Inkycal:
         self.optimize = True
 
         self.show_border = self.settings.get('border_around_modules', False)
+        self._night_shown = False
 
         # "crisp" = text without anti-aliasing (sharper on e-paper), "smooth" = Inkycal's default
         canvas_module.CRISP_TEXT = self.settings.get('text_rendering', 'smooth') == 'crisp'
@@ -364,6 +367,22 @@ class Inkycal:
         logger.info(f'Selected E-paper display: {self.settings["model"]}')
 
         while True:
+            # Night mode: show the night screen once, then wait until the night is over
+            if not run_once:
+                night_active, night_until, night_reason = night_mode.status(self.settings)
+                if night_active:
+                    if not self._night_shown:
+                        logger.info(f"Night mode ({night_reason}) until {night_until:%H:%M}, showing night screen")
+                        self._show_night_screen(night_until)
+                        self._night_shown = True
+                    seconds = (night_until - datetime.now()).total_seconds()
+                    await asyncio.sleep(max(30, min(300, seconds)))
+                    continue
+                if self._night_shown:
+                    logger.info("Night mode ended, back to the dashboard")
+                    self._night_shown = False
+                    self._remove_hashes(settings.IMAGE_FOLDER)
+
             logger.info("Starting new cycle...")
             current_time = arrow.now(tz=get_system_tz())
             logger.info(f"Timestamp: {current_time.format('HH:mm:ss DD.MM.YYYY')}")
@@ -466,6 +485,28 @@ class Inkycal:
                     logger.warning(f"Failed to set alarm for {sleep_time_rtc.format('HH:mm:ss')}")
 
             await asyncio.sleep(sleep_time)
+
+    def _show_night_screen(self, until):
+        """Render the night screen once (see inkycal/night_mode.py)."""
+        width, height = Display.get_display_size(self.settings["model"])
+        width, height = height, width  # Inkycal works in portrait mode
+        try:
+            image = night_mode.render(self.settings, (width, height), font_from_name(self.settings.get("font")),
+                                      get_system_tz(), until=until)
+        except Exception:
+            logger.exception("Night screen could not be drawn")
+            return
+        image.save(os.path.join(settings.IMAGE_FOLDER, "canvas.png"), "PNG")
+        if not self.render:
+            return
+        if self.optimize:
+            image = self._optimize_im(image)
+        if self.settings.get('orientation') == 180:
+            image = image.rotate(180, expand=True)
+        if self.supports_colour:
+            self.Display.render(image, Image.new('RGB', image.size, 'white'))
+        else:
+            self.Display.render(image)
 
     @staticmethod
     def _merge_bands():

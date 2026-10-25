@@ -171,3 +171,6 @@ plan.md
 
 # Saved web UI layouts (contain API keys / calendar links)
 layouts/
+
+# Night mode button state
+night_state.json

@@ -39,6 +39,8 @@ ACTIONS = {
     "power_refresh",
     "power_reboot",
     "power_shutdown",
+    "night_on",
+    "night_off",
 }
 
 
@@ -156,6 +158,9 @@ LABELS = {
     "lines": "only these lines (one per line, empty = all)",
     "show_platform": "show platform",
     "big_next": "big 'next train' line on top",
+    "night_mode": "night mode on schedule",
+    "night_start": "night starts at",
+    "night_end": "night ends at",
 }
 
 FONT_CHOICES = [
@@ -192,6 +197,9 @@ OPTION_LABELS = {
 }
 
 GENERAL_HINTS = {
+    "night_mode": "Show a simple night screen between start and end, no refreshes in between.",
+    "night_start": "Time like 23:00",
+    "night_end": "Time like 06:00. The button in the Power card also ends a night started by hand.",
     "font": "Font for all modules. A module can pick its own font in its section.",
     "text_rendering": "Crisp draws text without grey edges, which looks sharper on e-paper.",
 }
@@ -203,7 +211,8 @@ COMMA_SPLIT_KEYS = {"lines", "calibration_hours"}
 SECRET_KEYS = {"api_key", "api_key_owm", "token", "todoist_api_key"}
 
 GENERAL_ORDER = [
-    "model", "update_interval", "orientation", "language", "font", "text_rendering", "image_hash",
+    "model", "update_interval", "orientation", "language", "font", "text_rendering",
+    "night_mode", "night_start", "night_end", "image_hash",
     "border_around_modules", "info_section", "info_section_height", "calibration_hours",
 ]
 MODULE_ORDER = ["size", "padding_top", "padding_bottom", "padding_left", "padding_right", "font", "fontsize",
@@ -376,6 +385,9 @@ def render_settings_card(settings_data: Dict[str, object]) -> str:
     general = {k: v for k, v in settings_data.items() if k != "modules"}
     general.setdefault("font", "noto_sans_semicondensed_medium")
     general.setdefault("text_rendering", "smooth")
+    general.setdefault("night_mode", False)
+    general.setdefault("night_start", "23:00")
+    general.setdefault("night_end", "06:00")
 
     parts: List[str] = [
         "<section class='card' style='margin-top: 1rem;' data-card='settings'>",
@@ -488,6 +500,25 @@ def render_preview_card(settings_data: Dict[str, object]) -> str:
     """
 
 
+def _night_html() -> str:
+    from inkycal import night_mode
+    data = _webui()._read_settings_json()
+    active, until, reason = night_mode.status(data)
+    start, end = night_mode.schedule(data)
+    if active:
+        how = "started by button" if reason == "button" else "scheduled"
+        state = f"Night mode is <strong>on</strong> ({how}) until {until:%H:%M}."
+        button = "<button name='action' value='night_off' class='secondary'>End night mode</button>"
+    else:
+        if data.get("night_mode"):
+            state = f"Night mode is off. Scheduled from {start:%H:%M} to {end:%H:%M}."
+        else:
+            state = "Night mode is off. No schedule set (General settings)."
+        button = "<button name='action' value='night_on'>Night mode now</button>"
+    return (f"<h3 class='sub'>Night mode</h3><p class='muted'>{state}</p>"
+            f"<form method='post'><div class='button-row'>{button}</div></form>")
+
+
 def render_tools_cards() -> str:
     layouts = list_layouts()
     if layouts:
@@ -518,6 +549,7 @@ def render_tools_cards() -> str:
           </div>
         </form>
         <p class='muted'>After shutting down, wait until the green LED stops blinking before unplugging.</p>
+        {_night_html()}
       </section>
 
       <section class='card' data-card='layouts'>
@@ -816,7 +848,24 @@ def power_action(action: str, sudo_password: str = ""):
     return _Outcome("Unknown power action.")
 
 
+def night_action(action: str, sudo_password: str = ""):
+    from inkycal import night_mode
+    data = _webui()._read_settings_json()
+    if action == "night_on":
+        until = night_mode.start_now(data)
+        msg = f"Night mode on until {until:%H:%M}."
+    else:
+        night_mode.end_now(data)
+        msg = "Night mode ended."
+    r = power_action("power_refresh", sudo_password)
+    if r.sudo_required or r.message.startswith("Refresh failed"):
+        return _Outcome(f"{msg} {r.message}", r.sudo_required)
+    return _Outcome(f"{msg} The display updates in about 20 seconds.")
+
+
 def handle(action: str, form: Dict[str, List[str]], sudo_password: str = ""):
+    if action.startswith("night_"):
+        return night_action(action, sudo_password)
     if action == "settings_form":
         return handle_settings_form(form, sudo_password)
     if action.startswith("layout_"):
@@ -872,6 +921,7 @@ CSS = """
     .kv-check { display: flex; align-items: center; }
     .kv-check input { width: 1.4rem; height: 1.4rem; accent-color: var(--accent); }
     textarea.kv-list { min-height: 0; }
+    h3.sub { margin: 1rem 0 0.2rem; font-size: 0.98rem; }
     .kv-hint { color: var(--muted); font-size: 0.82rem; margin: -0.25rem 0 0.2rem 0.2rem; }
     .mod-tools { display: flex; gap: 0.4rem; padding: 0 0.9rem 0.7rem; flex-wrap: wrap; }
     button.small { padding: 0.35rem 0.6rem; font-size: 0.85rem; }
