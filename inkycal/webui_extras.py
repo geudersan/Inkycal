@@ -41,6 +41,7 @@ ACTIONS = {
     "power_shutdown",
     "night_on",
     "night_off",
+    "update_restart",
 }
 
 
@@ -550,6 +551,7 @@ def render_tools_cards() -> str:
         </form>
         <p class='muted'>After shutting down, wait until the green LED stops blinking before unplugging.</p>
         {_night_html()}
+        {_update_html()}
       </section>
 
       <section class='card' data-card='layouts'>
@@ -819,6 +821,54 @@ def _delayed(command: List[str], sudo_password: str, delay: float = 2.0) -> None
     threading.Timer(delay, run).start()
 
 
+def _git(*args: str, timeout: int = 30) -> Tuple[int, str, str]:
+    try:
+        r = subprocess.run(["git", *args], cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+    except Exception as error:
+        return 1, "", str(error)
+
+
+def _update_html() -> str:
+    code, out, _ = _git("log", "-1", "--format=%h|%cd", "--date=format:%d.%m.%Y %H:%M")
+    version = ""
+    if code == 0 and "|" in out:
+        commit, when = out.split("|", 1)
+        version = f"Installed version: <code>{html.escape(commit)}</code> from {html.escape(when)}"
+    return (
+        "<h3 class='sub'>Update</h3>"
+        f"<p class='muted'>{version}</p>"
+        "<form method='post'><div class='button-row'>"
+        "<button name='action' value='update_restart' "
+        "onclick=\"return confirm('Download the latest version and restart Inkycal and this page?')\">"
+        "Update &amp; restart</button></div></form>"
+    )
+
+
+def update_and_restart(sudo_password: str = ""):
+    """git pull --ff-only, then restart Inkycal and the web UI if something changed."""
+    problem = _sudo_ok(sudo_password)
+    if problem == "password":
+        return _Outcome("Update requires sudo password.", sudo_required=True)
+    if problem:
+        return _Outcome(f"Update failed: {problem}")
+
+    _, before, _ = _git("rev-parse", "HEAD")
+    code, out, err = _git("pull", "--ff-only", timeout=120)
+    if code != 0:
+        return _Outcome(f"Update failed: {err or out or 'unknown error'}")
+    _, after, _ = _git("rev-parse", "HEAD")
+    if before == after:
+        return _Outcome("Already up to date - nothing to do.")
+
+    W = _webui()
+    # restart after the answer was sent (restarting the web UI ends this process)
+    _delayed(["systemctl", "restart", W.SERVICE_NAME, "inkycal-webui.service"], sudo_password)
+    _, log, _ = _git("log", "--format=%s", f"{before}..{after}")
+    changes = "; ".join(log.splitlines()[:5])
+    return _Outcome(f"Updated, restarting - this page reloads in about 20 seconds. New: {changes}")
+
+
 def power_action(action: str, sudo_password: str = ""):
     W = _webui()
     if action == "power_refresh":
@@ -866,6 +916,8 @@ def night_action(action: str, sudo_password: str = ""):
 def handle(action: str, form: Dict[str, List[str]], sudo_password: str = ""):
     if action.startswith("night_"):
         return night_action(action, sudo_password)
+    if action == "update_restart":
+        return update_and_restart(sudo_password)
     if action == "settings_form":
         return handle_settings_form(form, sudo_password)
     if action.startswith("layout_"):
@@ -1036,6 +1088,18 @@ JS = """
         } catch (e) {}
       }
       window.setInterval(checkPreview, 15000);
+
+      // ---- reload after "Update & restart" ----
+      const msgEl = document.querySelector('.msg');
+      if (msgEl && msgEl.textContent.startsWith('Updated, restarting')) {
+        let left = 20;
+        const tick = () => {
+          if (left <= 0) { location.href = '/'; return; }
+          msgEl.textContent = msgEl.textContent.replace(/reloads in (about )?[0-9]+ seconds/, 'reloads in ' + left + ' seconds');
+          left -= 1; setTimeout(tick, 1000);
+        };
+        tick();
+      }
 
       // ---- hideable cards ----
       const KEY_HIDE = 'inkycal-hidden-cards';
