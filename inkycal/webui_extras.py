@@ -127,6 +127,9 @@ def default_module_config(name: str, settings_data: Dict[str, object]) -> Dict[s
             config[key] = spec["options"][0]
         elif spec.get("required"):
             config[key] = [] if key in LIST_KEYS else ""
+    if name == "Slideshow":
+        from inkycal.webui_photos import PHOTO_DIR
+        config["path"] = str(PHOTO_DIR)
     return config
 
 

@@ -23,6 +23,7 @@ from inkycal.display.supported_models import is_parallel_display, supported_mode
 from inkycal.settings import Settings
 from inkycal.utils.functions import get_inkycal_version
 from inkycal import webui_extras as extras
+from inkycal import webui_photos as photos
 
 settings = Settings()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -974,6 +975,7 @@ class InkycalWebUiHandler(BaseHTTPRequestHandler):
     }}
     .modal h3 {{ margin: 0 0 0.65rem; }}
     {extras.CSS}
+    {photos.CSS}
     @media (max-width: 640px) {{
       .wrapper {{ padding: 0.75rem; }}
       .card {{ padding: 0.85rem; border-radius: 12px; }}
@@ -989,6 +991,8 @@ class InkycalWebUiHandler(BaseHTTPRequestHandler):
     <p class='{message_class}'>{html.escape(message)}</p>
 
     {extras.render_preview_card(settings_data)}
+
+    {photos.render_card(settings_data)}
 
     <div class='grid'>
       {extras.render_tools_cards()}
@@ -1165,6 +1169,7 @@ class InkycalWebUiHandler(BaseHTTPRequestHandler):
     }})();
   </script>
   <script>{extras.JS}</script>
+  <script>{photos.JS}</script>
 </body>
 </html>
 """
@@ -1187,6 +1192,14 @@ class InkycalWebUiHandler(BaseHTTPRequestHandler):
                 self._send_html("<h1>No preview yet</h1>", status=HTTPStatus.NOT_FOUND)
             return
 
+        if parsed.path.startswith("/photos/thumb/"):
+            data = photos.thumb_bytes(urllib.parse.unquote(parsed.path[len("/photos/thumb/"):]))
+            if data:
+                self._send_binary(data, "image/jpeg")
+            else:
+                self._send_html("<h1>Not found</h1>", status=HTTPStatus.NOT_FOUND)
+            return
+
         if parsed.path == "/paypal-qr.png":
             qr_path = _ensure_paypal_qr(PAYPAL_URL)
             if qr_path and qr_path.exists():
@@ -1200,10 +1213,27 @@ class InkycalWebUiHandler(BaseHTTPRequestHandler):
             return
 
         self._query = urllib.parse.parse_qs(parsed.query)
-        self._send_html(self._render_dashboard())
+        self._send_html(self._render_dashboard(message=self._query.get("msg", [""])[0]))
+
+    def _photo_upload(self) -> None:
+        wants_json = "application/json" in self.headers.get("Accept", "")
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length > photos.MAX_UPLOAD_BYTES:
+            self.close_connection = True  # body is not read
+            ok, message = False, f"Upload failed: more than {photos.MAX_UPLOAD_BYTES // (1024 * 1024)} MB at once."
+        else:
+            ok, message = photos.handle_upload(self.headers.get("Content-Type", ""), self.rfile.read(length))
+        if wants_json:
+            self._send_json({"ok": ok, "message": message})
+            return
+        self._query = {}
+        self._send_html(self._render_dashboard(message=message))
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/photos/upload":
+            self._photo_upload()
+            return
         if parsed.path != "/":
             self._send_html("<h1>Not found</h1>", status=HTTPStatus.NOT_FOUND)
             return
@@ -1221,7 +1251,9 @@ class InkycalWebUiHandler(BaseHTTPRequestHandler):
         kv_values = form.get("kv_value", [])
         vcom_value = form.get("vcom", [""])[0]
 
-        if action in extras.ACTIONS:
+        if action in photos.ACTIONS:
+            outcome = photos.handle(action, form, sudo_password=sudo_password)
+        elif action in extras.ACTIONS:
             outcome = extras.handle(action, form, sudo_password=sudo_password)
         elif action == "save_settings":
             extras.backup_settings()
@@ -1253,7 +1285,7 @@ class InkycalWebUiHandler(BaseHTTPRequestHandler):
                 sudo_prompt_kv_paths=kv_paths if outcome.sudo_required else None,
                 sudo_prompt_kv_values=kv_values if outcome.sudo_required else None,
                 selected_git_branch=git_branch,
-                sudo_passthrough=form if (outcome.sudo_required and action in extras.ACTIONS) else None,
+                sudo_passthrough=form if (outcome.sudo_required and (action in extras.ACTIONS or action in photos.ACTIONS)) else None,
             )
         )
 
